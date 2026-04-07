@@ -1,0 +1,70 @@
+name: Mediplus CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Mediplus code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+          docker login --username AWS --password-stdin 318689657850.dkr.ecr.us-east-1.amazonaws.com
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_URI=318689657850.dkr.ecr.us-east-1.amazonaws.com/kubernetes-registry:${{ github.run_number }}
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+
+  update_and_deploy_manifest:
+    runs-on: ubuntu-latest
+    needs: build_and_push
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Clone Kubernetes Manifest Repo
+        env:
+          GIT_USERNAME: ${{ secrets.GIT_USERNAME }}
+          GIT_PASSWORD: ${{ secrets.GIT_PASSWORD }}
+        run: |
+          git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/nwakileebere821/kubernetes-manifest.git
+          cd kubernetes-manifest/mediplus-yaml
+          # Update image in deployment.yaml
+          sed -i "s+image:.*+image: 318689657850.dkr.ecr.us-east-1.amazonaws.com/kubernetes-registry:${{ github.run_number }}+g" deployment.yaml
+          git config user.email "you@example.com"
+          git config user.name "${GIT_USERNAME}"
+          git add .
+          git commit -m "Update image to build #${{ github.run_number }}"
+          git push
+
+      - name: Update kubeconfig and deploy to EKS
+        run: |
+          aws eks update-kubeconfig --region ${{ secrets.AWS_REGION }} --name ${{ secrets.EKS_CLUSTER_NAME }}
+          kubectl apply -f kubernetes-manifest/mediplus-yaml/deployment.yaml
