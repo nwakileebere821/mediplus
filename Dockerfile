@@ -1,20 +1,14 @@
-# Use Node.js image
-FROM node:18
+# Use nginx image
+FROM nginx:latest
 
-# Set working directory
-WORKDIR /app
+# Remove default nginx page
+RUN rm -rf /usr/share/nginx/html/*
 
-# Copy package files
-COPY package*.json ./
+# Copy your app files into nginx
+COPY . /usr/share/nginx/html
 
-# Install dependencies
-RUN npm install
+# Expose port 80
+EXPOSE 80
 
-# Copy app files
-COPY . .
-
-# Expose port
-EXPOSE 3000
-
-# Start app
-CMD ["npm", "start"]
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
